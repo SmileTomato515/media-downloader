@@ -4,6 +4,14 @@ FROM python:3.10-slim
 # 設定工作目錄
 WORKDIR /app
 
+# 安裝系統依賴 (cloudscraper 需要編譯環境)
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    libxml2-dev \
+    libxslt-dev \
+    && rm -rf /var/lib/apt/lists/*
+
 # 複製需求檔並安裝
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
