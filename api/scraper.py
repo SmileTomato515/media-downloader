@@ -1,4 +1,5 @@
 import requests
+import cloudscraper
 from bs4 import BeautifulSoup
 import json
 import re
@@ -10,6 +11,15 @@ USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTM
 MOBILE_USER_AGENT = 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36'
 
 def get_html(url, mobile=False):
+    # Use cloudscraper to bypass some bot detection
+    scraper = cloudscraper.create_scraper(
+        browser={
+            'browser': 'chrome',
+            'platform': 'android' if mobile else 'windows',
+            'desktop': not mobile
+        }
+    )
+
     headers = {
         'User-Agent': MOBILE_USER_AGENT if mobile else USER_AGENT,
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
@@ -21,7 +31,12 @@ def get_html(url, mobile=False):
         'Upgrade-Insecure-Requests': '1',
     }
     try:
-        response = requests.get(url, headers=headers, timeout=15)
+        response = scraper.get(url, headers=headers, timeout=15)
+        
+        # Check for login page
+        if "Login • Instagram" in response.text or "Log In" in response.text:
+            print(f"WARNING: Possible Login Wall detected for {url}")
+            
         response.raise_for_status()
         return response.text
     except Exception as e:
