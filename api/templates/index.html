@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>社群多媒體下載器</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#3b82f6">
+</head>
+<body class="bg-gray-100 min-h-screen flex flex-col items-center py-10 px-4">
+
+    <div class="w-full max-w-md bg-white rounded-xl shadow-md overflow-hidden md:max-w-2xl p-6">
+        <div class="text-center mb-8">
+            <h1 class="text-2xl font-bold text-gray-800">Social Media Downloader</h1>
+            <p class="text-gray-500 text-sm mt-2">支援 Facebook, Instagram, Threads</p>
+        </div>
+
+        <div class="space-y-4">
+            <div>
+                <label for="urlInput" class="block text-sm font-medium text-gray-700">貼文連結</label>
+                <div class="mt-1 flex rounded-md shadow-sm">
+                    <input type="text" id="urlInput" name="urlInput" 
+                        class="focus:ring-indigo-500 focus:border-indigo-500 flex-1 block w-full rounded-md sm:text-sm border-gray-300 p-3 border" 
+                        placeholder="貼上連結...">
+                </div>
+            </div>
+
+            <button onclick="analyze()" id="analyzeBtn"
+                class="w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
+                解析連結
+            </button>
+        </div>
+
+        <div id="loading" class="hidden mt-6 text-center">
+            <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 mx-auto"></div>
+            <p class="mt-2 text-gray-500">正在解析中...</p>
+        </div>
+
+        <div id="resultArea" class="hidden mt-8 space-y-6">
+            <!-- Results will be injected here -->
+        </div>
+    </div>
+
+    <script>
+        async function analyze() {
+            const url = document.getElementById('urlInput').value;
+            if (!url) return alert('請輸入連結');
+
+            const btn = document.getElementById('analyzeBtn');
+            const loading = document.getElementById('loading');
+            const resultArea = document.getElementById('resultArea');
+
+            btn.disabled = true;
+            loading.classList.remove('hidden');
+            resultArea.classList.add('hidden');
+            resultArea.innerHTML = '';
+
+            try {
+                const response = await fetch('/api/analyze', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url })
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.detail || '解析失敗');
+                }
+
+                renderResults(data);
+                
+                // Auto-download all media
+                if (data.media && data.media.length > 0) {
+                    downloadAll(data.media);
+                }
+            } catch (error) {
+                alert(error.message);
+            } finally {
+                btn.disabled = false;
+                loading.classList.add('hidden');
+            }
+        }
+
+        async function downloadAll(mediaList) {
+            const statusArea = document.createElement('div');
+            statusArea.className = 'text-center text-sm text-green-600 font-semibold mt-4';
+            statusArea.innerText = `準備下載 ${mediaList.length} 個檔案...`;
+            document.getElementById('resultArea').prepend(statusArea);
+
+            for (let i = 0; i < mediaList.length; i++) {
+                const item = mediaList[i];
+                const ext = item.type === 'video' ? 'mp4' : 'jpg';
+                // Generate unique filename: media_TIMESTAMP_INDEX.ext
+                const filename = `media_${Date.now()}_${i + 1}.${ext}`;
+                const downloadUrl = `/api/proxy_download?url=${encodeURIComponent(item.url)}&name=${filename}`;
+                
+                // Create invisible link to trigger download
+                const a = document.createElement('a');
+                a.href = downloadUrl;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                
+                // Small delay to prevent browser blocking multiple downloads
+                await new Promise(r => setTimeout(r, 1000));
+            }
+            statusArea.innerText = '所有下載已啟動！';
+        }
+
+        function renderResults(data) {
+            const resultArea = document.getElementById('resultArea');
+            resultArea.classList.remove('hidden');
+
+            if (!data.media || data.media.length === 0) {
+                resultArea.innerHTML = '<p class="text-center text-red-500">找不到媒體資源</p>';
+                return;
+            }
+
+            data.media.forEach((item, index) => {
+                const card = document.createElement('div');
+                card.className = 'border rounded-lg p-4 bg-gray-50';
+
+                // Use proxy for preview to avoid CORS/Referer issues
+                const ext = item.type === 'video' ? 'mp4' : 'jpg';
+                const filename = `media_${Date.now()}_${index + 1}.${ext}`;
+                const proxyUrl = `/api/proxy_download?url=${encodeURIComponent(item.url)}&name=${filename}&inline=true`;
+                const downloadUrl = `/api/proxy_download?url=${encodeURIComponent(item.url)}&name=${filename}`;
+
+                let preview = '';
+                if (item.type === 'image') {
+                    preview = `<img src="${proxyUrl}" class="w-full h-48 object-cover rounded-md mb-3">`;
+                } else if (item.type === 'video') {
+                    preview = `<video src="${proxyUrl}" controls class="w-full h-48 object-cover rounded-md mb-3"></video>`;
+                }
+
+                card.innerHTML = `
+                    ${preview}
+                    <div class="flex justify-between items-center">
+                        <span class="text-xs font-semibold uppercase bg-gray-200 px-2 py-1 rounded text-gray-600">${item.type} ${item.quality || ''}</span>
+                        <a href="${downloadUrl}" download="${filename}" 
+                           class="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-indigo-700 bg-indigo-100 hover:bg-indigo-200 focus:outline-none">
+                           下載
+                        </a>
+                    </div>
+                `;
+                resultArea.appendChild(card);
+            });
+        }
+        
+        // PWA Install Logic
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/sw.js')
+                .then(reg => console.log('SW registered!', reg))
+                .catch(err => console.log('SW failed', err));
+        }
+
+        // Handle Share Target (URL params)
+        window.addEventListener('DOMContentLoaded', () => {
+            const urlParams = new URLSearchParams(window.location.search);
+            const sharedUrl = urlParams.get('text') || urlParams.get('url') || urlParams.get('title');
+            
+            if (sharedUrl) {
+                // Extract URL from text if mixed (e.g. "Check this out https://...")
+                const urlMatch = sharedUrl.match(/https?:\/\/[^\s]+/);
+                if (urlMatch) {
+                    document.getElementById('urlInput').value = urlMatch[0];
+                    analyze(); // Auto-start
+                }
+            }
+        });
+    </script>
+</body>
+</html>
