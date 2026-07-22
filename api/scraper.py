@@ -56,6 +56,28 @@ def find_key(obj, key):
             if res: return res
     return None
 
+def extract_media_from_node(node):
+    """Extract best-quality media from an IG media node (image_versions2 or video_versions)."""
+    if node.get('video_versions'):
+        versions = node['video_versions']
+        # Sort by resolution when available, else take first (highest quality)
+        try:
+            best = sorted(versions, key=lambda x: x.get('width', 0) * x.get('height', 0), reverse=True)[0]
+        except Exception:
+            best = versions[0]
+        return {'type': 'video', 'url': best['url'],
+                'width': best.get('width'), 'height': best.get('height')}
+    if node.get('image_versions2'):
+        candidates = node['image_versions2'].get('candidates', [])
+        if not candidates:
+            return {}
+        # candidates[0] is always the highest-quality (original) in the new IG format
+        # (no pWxH size restriction in its stp parameter)
+        best = candidates[0]
+        return {'type': 'image', 'url': best['url'],
+                'width': node.get('original_width'), 'height': node.get('original_height')}
+    return {}
+
 def parse_instagram(url):
     print(f"Parsing Instagram: {url}")
     html = get_html(url)
@@ -63,30 +85,57 @@ def parse_instagram(url):
     
     result = {'type': 'instagram', 'url': url, 'media': []}
     soup = BeautifulSoup(html, 'lxml')
-
-    # Method 1: Try to find the new GraphQL-like JSON data
     scripts = soup.find_all('script')
+
+    # Method 1a: New format — script tags that are JSON objects containing image_versions2
+    # Instagram now embeds media data as {"require":[...]} JSON (PolarisLoggedOut*)
+    for script in scripts:
+        if not script.string or 'image_versions2' not in script.string:
+            continue
+        try:
+            data = json.loads(script.string)
+        except Exception:
+            continue
+        try:
+            carousel = find_key(data, 'carousel_media')
+            if carousel and isinstance(carousel, list):
+                for child in carousel:
+                    m = extract_media_from_node(child)
+                    if m: result['media'].append(m)
+            else:
+                # Single-image post: find the media node that has original_height
+                # (avoids picking up thumbnail/profile nodes)
+                def find_media_nodes(obj, acc):
+                    if isinstance(obj, dict):
+                        if 'image_versions2' in obj and 'original_height' in obj:
+                            acc.append(obj)
+                            return  # don't recurse into it
+                        for v in obj.values():
+                            find_media_nodes(v, acc)
+                    elif isinstance(obj, list):
+                        for item in obj:
+                            find_media_nodes(item, acc)
+                nodes = []
+                find_media_nodes(data, nodes)
+                if nodes:
+                    m = extract_media_from_node(nodes[0])
+                    if m: result['media'].append(m)
+            if result['media']:
+                print(f"  -> Method 1a: found {len(result['media'])} media items")
+                return result
+        except Exception as e:
+            print(f"Error in Method 1a: {e}")
+
+    # Method 1b: Legacy format — xdt_api__v1__media__shortcode__web_info in script
     for script in scripts:
         if script.string and 'xdt_api__v1__media__shortcode__web_info' in script.string:
             try:
-                match = re.search(r'({.*"xdt_api__v1__media__shortcode__web_info".*})', script.string)
+                match = re.search(r'({.*"xdt_api__v1__media__shortcode__web_info".*})', script.string, re.DOTALL)
                 if match:
                     data = json.loads(match.group(1))
                     media_info = find_key(data, 'xdt_api__v1__media__shortcode__web_info')
                     if media_info and 'items' in media_info:
                         item = media_info['items'][0]
-                        
-                        def extract_media_from_node(node):
-                            media_item = {}
-                            if node.get('video_versions'):
-                                best_video = sorted(node['video_versions'], key=lambda x: x['width'] * x['height'], reverse=True)[0]
-                                media_item = {'type': 'video', 'url': best_video['url'], 'width': best_video['width'], 'height': best_video['height']}
-                            elif node.get('image_versions2'):
-                                candidates = node['image_versions2']['candidates']
-                                best_image = sorted(candidates, key=lambda x: x['width'] * x['height'], reverse=True)[0]
-                                media_item = {'type': 'image', 'url': best_image['url'], 'width': best_image['width'], 'height': best_image['height']}
-                            return media_item
-
                         if item.get('carousel_media'):
                             for child in item['carousel_media']:
                                 m = extract_media_from_node(child)
@@ -94,13 +143,13 @@ def parse_instagram(url):
                         else:
                             m = extract_media_from_node(item)
                             if m: result['media'].append(m)
-                            
                         if result['media']:
+                            print(f"  -> Method 1b: found {len(result['media'])} media items")
                             return result
             except Exception as e:
-                print(f"Error parsing IG JSON: {e}")
+                print(f"Error in Method 1b: {e}")
 
-    # Method 2: Fallback to Open Graph
+    # Method 2: Fallback to Open Graph (single image/video only, may be cropped thumbnail)
     print("  -> Fallback to OG tags")
     og_video = soup.find('meta', property='og:video')
     og_image = soup.find('meta', property='og:image')
