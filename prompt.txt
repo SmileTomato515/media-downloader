@@ -1,0 +1,33 @@
+​Role: 你是一位資深的行動裝置 App 開發者與後端架構師，專精於 React Native/Flutter、網路爬蟲技術以及行動裝置系統整合（Share Extension）。
+​Project Overview:
+我要開發一個名為「社群多媒體下載器 (Social Media Downloader)」的工具。其核心目標是讓用戶在手機上瀏覽 Facebook、Instagram、X (Twitter) 時，能透過系統內建的「分享」按鈕，直接將貼文連結傳送到我的 App，並自動解析並下載最高畫質的圖片與影片到手機相簿。
+​Key Features & Requirements:
+​系統級分享整合 (Share Extension/Intent): 在 iOS 與 Android 的分享選單中顯示 App 圖示。接收到連結後，App 須自動啟動並解析 URL。
+​多平台解析器: 針對 FB、IG、X 的 URL 進行解析，提取媒體資源的 Direct URL（需選取最高畫質，如 4K 影片或原始圖檔）。
+​身份驗證與私人內容處理: 整合內嵌瀏覽器 (WebView) 或 Cookie 管理器，讓用戶能登入這三個平台，以解決無法下載「私人貼文」或「僅限好友觀看」內容的問題。
+​媒體存儲管理: 使用原生 API 將下載的檔案直接存入手機的「相簿 (Gallery/Photos)」，而非僅存放在 App 的沙盒空間。
+​UI/UX: 簡潔的下載進度顯示，以及已下載內容的歷史紀錄管理。
+
+​請考慮各平台的 API 限制與反爬蟲機制。
+​程式碼需具備易讀性與擴充性。
+
+請直接完成程式並進行爬蟲測試及優化，測試連結如下:
+instagram
+https://www.instagram.com/p/DSFXUE2GC8u/?utm_source=ig_web_copy_link&igsh=NTc4MTIwNjQ2YQ==
+facebook
+https://www.facebook.com/share/p/1Cgn85ERrX/
+threads
+https://www.threads.com/@jiyih9232/post/DS1QuNAEeto?xmt=AQF00waWvlSH_VgJvRAc1rz9cAjeea0lElL8zX6Ls_mmOw
+
+
+​Deliverables Requested:
+請針對此專案提供：
+​技術架構建議: 推薦最適合的開發框架（例如 Flutter 搭配 Native 模組，或 React Native）。
+​分享路徑實作細節: 說明如何實作 iOS 的 Share Extension 與 Android 的 Intent Filter 來接收連結。
+​解析邏輯架構: 如何處理動態加載的內容？建議使用後端 API 解析還是前端 Headless 邏輯？
+​登入狀態保持: 如何安全地存儲用戶的 Login Session/Cookies 以便下載私人貼文。
+​程式碼範例:
+​如何在 Android Manifest 或 iOS Info.plist 設定分享功能。
+​一段基礎的解析邏輯（以其中一個平台為例）。
+​如何呼叫原生 API 儲存媒體到相簿。
+​Constraints:
