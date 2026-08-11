@@ -85,11 +85,65 @@ def parse_instagram(url):
     
     result = {'type': 'instagram', 'url': url, 'media': []}
     soup = BeautifulSoup(html, 'lxml')
-    scripts = soup.find_all('script')
+    
+    # Method 1: Try all application/json scripts first (highest quality)
+    json_scripts = soup.find_all('script', type='application/json')
+    for script in json_scripts:
+        if not script.string or len(script.string) < 500:
+            continue
+        try:
+            data = json.loads(script.string)
+            
+            # Look for carousel
+            carousel = find_key(data, 'carousel_media')
+            if carousel and isinstance(carousel, list):
+                for child in carousel:
+                    m = extract_media_from_node(child)
+                    if m: result['media'].append(m)
+                if result['media']:
+                    print(f"  -> JSON script: found {len(result['media'])} media items")
+                    return result
+            
+            # Look for single media with high resolution
+            image_versions = find_key(data, 'image_versions2')
+            video_versions = find_key(data, 'video_versions')
+            
+            if image_versions or video_versions:
+                def find_media_nodes(obj, acc):
+                    if isinstance(obj, dict):
+                        # Check if it's a media node with original_height or high width
+                        if 'image_versions2' in obj:
+                            candidates = obj['image_versions2'].get('candidates', [])
+                            if candidates and candidates[0].get('width', 0) > 500:
+                                if obj not in acc:  # Avoid duplicates
+                                    acc.append(obj)
+                                return
+                        elif 'video_versions' in obj:
+                            if obj not in acc:
+                                acc.append(obj)
+                            return
+                        for v in obj.values():
+                            find_media_nodes(v, acc)
+                    elif isinstance(obj, list):
+                        for item in obj:
+                            find_media_nodes(item, acc)
+                
+                nodes = []
+                find_media_nodes(data, nodes)
+                if nodes:
+                    for node in nodes[:10]:  # Limit to first 10 to avoid profile pics
+                        m = extract_media_from_node(node)
+                        if m and m not in result['media']:
+                            result['media'].append(m)
+                    if result['media']:
+                        print(f"  -> JSON script: found {len(result['media'])} media items")
+                        return result
+        except Exception:
+            continue
 
-    # Method 1a: New format — script tags that are JSON objects containing image_versions2
-    # Instagram now embeds media data as {"require":[...]} JSON (PolarisLoggedOut*)
-    for script in scripts:
+    # Method 2: Legacy text search in regular scripts (contains image_versions2 as text)
+    all_scripts = soup.find_all('script')
+    for script in all_scripts:
         if not script.string or 'image_versions2' not in script.string:
             continue
         try:
@@ -103,13 +157,11 @@ def parse_instagram(url):
                     m = extract_media_from_node(child)
                     if m: result['media'].append(m)
             else:
-                # Single-image post: find the media node that has original_height
-                # (avoids picking up thumbnail/profile nodes)
                 def find_media_nodes(obj, acc):
                     if isinstance(obj, dict):
                         if 'image_versions2' in obj and 'original_height' in obj:
                             acc.append(obj)
-                            return  # don't recurse into it
+                            return
                         for v in obj.values():
                             find_media_nodes(v, acc)
                     elif isinstance(obj, list):
@@ -121,13 +173,13 @@ def parse_instagram(url):
                     m = extract_media_from_node(nodes[0])
                     if m: result['media'].append(m)
             if result['media']:
-                print(f"  -> Method 1a: found {len(result['media'])} media items")
+                print(f"  -> Text search: found {len(result['media'])} media items")
                 return result
         except Exception as e:
-            print(f"Error in Method 1a: {e}")
+            continue
 
-    # Method 1b: Legacy format — xdt_api__v1__media__shortcode__web_info in script
-    for script in scripts:
+    # Method 3: xdt_api legacy format
+    for script in all_scripts:
         if script.string and 'xdt_api__v1__media__shortcode__web_info' in script.string:
             try:
                 match = re.search(r'({.*"xdt_api__v1__media__shortcode__web_info".*})', script.string, re.DOTALL)
@@ -144,19 +196,20 @@ def parse_instagram(url):
                             m = extract_media_from_node(item)
                             if m: result['media'].append(m)
                         if result['media']:
-                            print(f"  -> Method 1b: found {len(result['media'])} media items")
+                            print(f"  -> xdt_api: found {len(result['media'])} media items")
                             return result
-            except Exception as e:
-                print(f"Error in Method 1b: {e}")
+            except Exception:
+                continue
 
-    # Method 2: Fallback to Open Graph (single image/video only, may be cropped thumbnail)
-    print("  -> Fallback to OG tags")
+    # Method 4: Fallback to OG tags (usually low quality thumbnail)
+    print("  -> Fallback to OG tags (may be low quality)")
     og_video = soup.find('meta', property='og:video')
     og_image = soup.find('meta', property='og:image')
     
     if og_video:
         result['media'].append({'type': 'video', 'url': og_video['content']})
     elif og_image:
+        # ponytail: OG image is often cropped/thumbnail, not original
         result['media'].append({'type': 'image', 'url': og_image['content']})
         
     return result
@@ -218,14 +271,12 @@ def parse_facebook(url):
                             if w_match and uri_match:
                                 width = int(w_match.group(1))
                                 if width > 500:
-                                    clean_url = uri_match.group(1).replace('\\/', '/')
+                                    img_url = uri_match.group(1).replace('\\/', '/')
                                     # Avoid duplicates
-                                    if not any(x['url'] == clean_url for x in result['media']):
-                                        result['media'].append({'type': 'image', 'url': clean_url})
+                                    if not any(x['url'] == img_url for x in result['media']):
+                                        result['media'].append({'type': 'image', 'url': img_url})
                         except:
                             pass
-                    if not any(x['url'] == clean_url for x in result['media']):
-                        result['media'].append({'type': 'video', 'quality': 'sd', 'url': clean_url})
                         
             except Exception as e:
                 print(f"FB Relay error: {e}")
@@ -266,83 +317,215 @@ def parse_threads(url):
     result = {'type': 'threads', 'url': url, 'media': []}
     soup = BeautifulSoup(html, 'lxml')
     
-    # Extract Shortcode
-    shortcode_match = re.search(r'/post/([^/?]+)', url)
+    # Extract Shortcode - support both /post/, /t/, and /share/ formats
+    shortcode_match = re.search(r'/(?:post|t|share)/([^/?]+)', url)
     target_shortcode = shortcode_match.group(1) if shortcode_match else None
     
-    # 1. Try ScheduledServerJS (New Threads Structure)
-    scripts = soup.find_all('script')
-    for script in scripts:
-        if script.string and 'ScheduledServerJS' in script.string:
+    # ponytail: /share/ links redirect to the real post, extract actual shortcode from canonical URL
+    if '/share/' in url:
+        canonical = soup.find('link', rel='canonical')
+        if canonical:
+            canonical_url = canonical.get('href', '')
+            # If canonical points to homepage, the share link is invalid
+            if canonical_url in ['https://www.threads.com/', 'https://www.threads.com']:
+                print(f"  -> Invalid /share/ link (canonical is homepage)")
+                return result
+            canonical_match = re.search(r'/post/([^/?]+)', canonical_url)
+            if canonical_match:
+                target_shortcode = canonical_match.group(1)
+                print(f"  -> Resolved /share/ to shortcode: {target_shortcode}")
+    
+    # Helper to extract from a post node
+    def extract_threads_media(node):
+        media_list = []
+        
+        # Check for Carousel
+        if node.get('carousel_media'):
+            for item in node['carousel_media']:
+                media_list.extend(extract_threads_media(item))
+            return media_list
+
+        # Check for Video
+        if node.get('video_versions'):
+            videos = node['video_versions']
+            if videos:
+                best_video = sorted(videos, key=lambda x: x.get('width', 0) * x.get('height', 0), reverse=True)[0]
+                media_list.append({'type': 'video', 'url': best_video['url'], 'width': best_video.get('width'), 'height': best_video.get('height')})
+            return media_list
+        
+        # Check for Image
+        if node.get('image_versions2'):
+            candidates = node['image_versions2'].get('candidates', [])
+            if candidates:
+                # candidates[0] is highest quality
+                best_image = candidates[0]
+                media_list.append({'type': 'image', 'url': best_image['url'], 'width': best_image.get('width'), 'height': best_image.get('height')})
+            return media_list
+            
+        return media_list
+
+    # 1. Try to find the exact post by shortcode first (most accurate)
+    if target_shortcode:
+        scripts = soup.find_all('script', type='application/json')
+        for script in scripts:
+            if not script.string or len(script.string) < 1000:
+                continue
             try:
-                # Try to parse the script content as JSON directly
-                try:
-                    data = json.loads(script.string)
-                except:
-                    # If not valid JSON, try to extract the relevant part
-                    # It might be inside require(...)
-                    continue
-
-                # Helper to extract from a post node
-                def extract_threads_media(node):
-                    media_list = []
-                    
-                    # Check for Carousel
-                    if node.get('carousel_media'):
-                        for item in node['carousel_media']:
-                            media_list.extend(extract_threads_media(item))
-                        return media_list
-
-                    # Check for Video
-                    if node.get('video_versions'):
-                        videos = node['video_versions']
-                        if videos:
-                            best_video = sorted(videos, key=lambda x: x.get('width', 0) * x.get('height', 0), reverse=True)[0]
-                            media_list.append({'type': 'video', 'url': best_video['url'], 'width': best_video.get('width'), 'height': best_video.get('height')})
-                        return media_list
-                    
-                    # Check for Image
-                    if node.get('image_versions2'):
-                        candidates = node['image_versions2'].get('candidates', [])
-                        if candidates:
-                            best_image = sorted(candidates, key=lambda x: x.get('width', 0) * x.get('height', 0), reverse=True)[0]
-                            media_list.append({'type': 'image', 'url': best_image['url'], 'width': best_image.get('width'), 'height': best_image.get('height')})
-                        return media_list
-                        
-                    return media_list
-
-                # Helper to find the specific post node by shortcode
-                def find_post_node(obj, code):
+                data = json.loads(script.string)
+                
+                # Find post node with matching code
+                def find_post_by_code(obj, code):
                     if isinstance(obj, dict):
                         if obj.get('code') == code:
                             return obj
-                        for k, v in obj.items():
-                            found = find_post_node(v, code)
-                            if found: return found
+                        for v in obj.values():
+                            result = find_post_by_code(v, code)
+                            if result:
+                                return result
                     elif isinstance(obj, list):
                         for item in obj:
-                            found = find_post_node(item, code)
-                            if found: return found
+                            result = find_post_by_code(item, code)
+                            if result:
+                                return result
                     return None
-
-                if target_shortcode:
-                    post_node = find_post_node(data, target_shortcode)
-                    if post_node:
+                
+                post_node = find_post_by_code(data, target_shortcode)
+                
+                if post_node:
+                    # ponytail: prioritize direct media over carousel (avoids picking up recommended content)
+                    if post_node.get('video_versions') or post_node.get('image_versions2'):
+                        # Single media post (image or video)
                         extracted = extract_threads_media(post_node)
-                        result['media'].extend(extracted)
-                        return result # Found the specific post, return immediately
+                        if extracted:
+                            result['media'].extend(extracted)
+                            print(f"  -> Found {len(result['media'])} media items (direct)")
+                            return result
+                    elif post_node.get('carousel_media'):
+                        # Carousel post
+                        for item in post_node['carousel_media']:
+                            extracted = extract_threads_media(item)
+                            result['media'].extend(extracted)
+                        if result['media']:
+                            print(f"  -> Found {len(result['media'])} media items (carousel)")
+                            return result
+                            
+            except Exception:
+                continue
+        
+        # ponytail: if we have a specific shortcode but couldn't find it, don't fallback to guessing
+        # The URL explicitly specified a post that doesn't exist or was deleted
+        print(f"  -> Post with shortcode '{target_shortcode}' not found")
+        return result
+    
+    # 2. Fallback: collect all carousels and prioritize video-heavy ones (only when no shortcode specified)
+    scripts = soup.find_all('script', type='application/json')
+    
+    # ponytail: collect all carousels first, prioritize video-heavy ones
+    all_carousels = []
+    
+    for script in scripts:
+        if not script.string or len(script.string) < 1000:
+            continue
+        try:
+            data = json.loads(script.string)
+            
+            # Find ALL carousels in this script
+            def find_all_carousels(obj, acc):
+                if isinstance(obj, dict):
+                    if 'carousel_media' in obj and isinstance(obj['carousel_media'], list):
+                        if len(obj['carousel_media']) > 0:
+                            acc.append(obj['carousel_media'])
+                    for v in obj.values():
+                        find_all_carousels(v, acc)
+                elif isinstance(obj, list):
+                    for item in obj:
+                        find_all_carousels(item, acc)
+            
+            carousels = []
+            find_all_carousels(data, carousels)
+            all_carousels.extend(carousels)
+                        
+        except Exception:
+            continue
+    
+    # Process carousels: prioritize ones with videos
+    if all_carousels:
+        # Score each carousel: videos = 10 points, images = 1 point
+        scored_carousels = []
+        for carousel in all_carousels:
+            score = 0
+            video_count = 0
+            for item in carousel:
+                if item.get('video_versions'):
+                    score += 10
+                    video_count += 1
+                elif item.get('image_versions2'):
+                    score += 1
+            scored_carousels.append((score, video_count, len(carousel), carousel))
+        
+        # Sort by score (desc), then video count (desc), then total items (desc)
+        scored_carousels.sort(reverse=True)
+        
+        # Use the highest-scored carousel
+        if scored_carousels:
+            best_carousel = scored_carousels[0][3]
+            for item in best_carousel:
+                extracted = extract_threads_media(item)
+                result['media'].extend(extracted)
+            if result['media']:
+                print(f"  -> Found {len(result['media'])} media items")
+                return result
+    
+    # 2. Try single media (no carousel)
+    for script in scripts:
+        if not script.string or len(script.string) < 1000:
+            continue
+        try:
+            data = json.loads(script.string)
+            
+            image_versions = find_key(data, 'image_versions2')
+            video_versions = find_key(data, 'video_versions')
+            
+            if image_versions or video_versions:
+                def find_media_nodes(obj, acc):
+                    if isinstance(obj, dict):
+                        if ('image_versions2' in obj or 'video_versions' in obj):
+                            if obj.get('image_versions2'):
+                                candidates = obj['image_versions2'].get('candidates', [])
+                                if candidates and candidates[0].get('width', 0) > 500:
+                                    acc.append(obj)
+                                    return
+                            elif obj.get('video_versions'):
+                                acc.append(obj)
+                                return
+                        for v in obj.values():
+                            find_media_nodes(v, acc)
+                    elif isinstance(obj, list):
+                        for item in obj:
+                            find_media_nodes(item, acc)
+                
+                nodes = []
+                find_media_nodes(data, nodes)
+                if nodes:
+                    extracted = extract_threads_media(nodes[0])
+                    result['media'].extend(extracted)
+                    if result['media']:
+                        print(f"  -> Found {len(result['media'])} media items")
+                        return result
+                        
+        except Exception as e:
+            continue
 
-            except Exception as e:
-                print(f"Threads JSON error: {e}")
-
-    # 2. Fallback to OG
+    # 2. Fallback to OG (usually low quality thumbnail)
     if not result['media']:
+        print("  -> Fallback to OG tags (may be low quality)")
         og_video = soup.find('meta', property='og:video')
         og_image = soup.find('meta', property='og:image')
         
         if og_video:
             result['media'].append({'type': 'video', 'url': og_video['content']})
         elif og_image:
+            # ponytail: OG image is often a placeholder/thumbnail, not original
             result['media'].append({'type': 'image', 'url': og_image['content']})
         
     return result

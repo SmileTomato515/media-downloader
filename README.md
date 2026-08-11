@@ -10,6 +10,9 @@
 ## 功能特色
 
 - 支援 Instagram / Facebook / Threads 連結分析
+- **優先解析原始高解析度媒體**（避免只抓取到縮圖）
+- 支援 Threads 的 `/post/`, `/t/`, `/share/` 格式連結（自動解析重定向）
+- **精確匹配 shortcode**：無效或已刪除的貼文會返回空結果，避免誤抓推薦內容
 - 回傳貼文內圖片與影片清單（依平台結構解析）
 - `proxy_download` 代理下載，避免前端直接抓取被擋
 - 內建 PWA 靜態檔路由（`manifest.json` / `sw.js`）
@@ -32,11 +35,24 @@
 │  ├─ scraper.py       # 各平台解析邏輯
 │  ├─ static/          # PWA 靜態檔
 │  └─ templates/       # HTML 模板
-├─ app/                # Expo React Native App
+├─ app/
+│  ├─ App.js           # React Native 主應用
+│  ├─ app.json         # Expo 配置
+│  └─ assets/          # 應用 icon 與啟動畫面 ✨
 ├─ scraper/            # Node 測試腳本（獨立）
 ├─ requirements.txt
 └─ Dockerfile
 ```
+
+## 應用 Icon ✨
+
+新的應用 icon 採用**現代藍色設計**（`#2563EB`），替代了舊的 Instagram 風格：
+
+- 🎨 **設計特色**：簡約現代風格，藍色圓形背景
+- 📱 **社群視覺**：三個白色圓圈代表三個平台（Instagram、Facebook、Threads）
+- ⬇️ **下載主題**：白色下載箭頭象徵應用的核心功能
+
+生成的 icon 文件已自動配置到 Expo 和網頁應用。
 
 ## 本機啟動（Python）
 
@@ -61,6 +77,15 @@ docker run --rm -p 8080:8080 media-downloader
 
 啟動後開啟：
 - `http://127.0.0.1:8080/`
+
+## 線上部署
+
+✅ 已部署到 Google Cloud Run：
+```
+https://social-downloader-962329744591.us-central1.run.app
+```
+
+部署使用 Dockerfile 自動化，每次推送都可重新部署。
 
 ## API 端點
 
