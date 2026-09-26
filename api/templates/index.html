@@ -13,7 +13,7 @@
     <div class="w-full max-w-md bg-white rounded-xl shadow-md overflow-hidden md:max-w-2xl p-6">
         <div class="text-center mb-8">
             <h1 class="text-2xl font-bold text-gray-800">Social Media Downloader</h1>
-            <p class="text-gray-500 text-sm mt-2">支援 Facebook, Instagram, Threads</p>
+            <p class="text-gray-500 text-sm mt-2">支援 Facebook, Instagram, Threads, Xiutaku</p>
         </div>
 
         <div class="space-y-4">
@@ -23,6 +23,43 @@
                     <input type="text" id="urlInput" name="urlInput" 
                         class="focus:ring-indigo-500 focus:border-indigo-500 flex-1 block w-full rounded-md sm:text-sm border-gray-300 p-3 border" 
                         placeholder="貼上連結...">
+                </div>
+            </div>
+
+            <!-- Advanced Options (Cookies) -->
+            <div class="border-t pt-4">
+                <button type="button" onclick="toggleAdvanced()" 
+                    class="text-sm text-indigo-600 hover:text-indigo-800 flex items-center gap-1">
+                    <span id="advancedToggleIcon">▶</span>
+                    進階選項 (登入狀態下載)
+                </button>
+                <div id="advancedOptions" class="hidden mt-3">
+                    <label for="cookiesInput" class="block text-sm font-medium text-gray-700">
+                        Cookies (登入狀態) 
+                        <span class="text-xs font-normal text-gray-500">- 用於下載需要登入才能看到的內容</span>
+                    </label>
+                    <div class="relative">
+                        <textarea id="cookiesInput" name="cookiesInput" rows="3"
+                            class="mt-1 focus:ring-indigo-500 focus:border-indigo-500 block w-full rounded-md sm:text-sm border-gray-300 p-3 border" 
+                            placeholder="sessionid=xxxxx; csrftoken=yyyyy; ..."></textarea>
+                        <button type="button" onclick="saveCookies()" 
+                            class="absolute top-2 right-2 text-xs px-2 py-1 bg-green-100 hover:bg-green-200 text-green-700 rounded">
+                            💾 儲存
+                        </button>
+                    </div>
+                    <div class="mt-2 text-xs text-gray-600 bg-blue-50 p-3 rounded border border-blue-200">
+                        <p class="font-semibold mb-1">📖 如何取得 Cookies：</p>
+                        <ol class="list-decimal list-inside space-y-1">
+                            <li>在瀏覽器登入 Threads/Instagram</li>
+                            <li>按 <kbd class="px-1 py-0.5 bg-gray-200 rounded">F12</kbd> 開啟開發者工具</li>
+                            <li>點擊 <strong>Application</strong> (或 <strong>應用程式</strong>) 分頁</li>
+                            <li>左側選擇 <strong>Cookies</strong> → 選擇網站</li>
+                            <li>找到 <code class="bg-gray-100 px-1">sessionid</code> 並複製其值</li>
+                            <li>格式：<code class="bg-gray-100 px-1">sessionid=你的值</code></li>
+                        </ol>
+                        <p class="mt-2 font-semibold text-green-700">💡 Cookies 會自動儲存在您的瀏覽器（僅限本機），下次使用時自動填入</p>
+                        <p class="mt-1 text-gray-500">⚠️ Instagram/Threads cookies 可共用，Facebook 需單獨設定</p>
+                    </div>
                 </div>
             </div>
 
@@ -43,9 +80,46 @@
     </div>
 
     <script>
+        // Load saved cookies on page load
+        window.addEventListener('DOMContentLoaded', () => {
+            const savedCookies = localStorage.getItem('savedCookies');
+            if (savedCookies) {
+                document.getElementById('cookiesInput').value = savedCookies;
+            }
+        });
+
+        function toggleAdvanced() {
+            const options = document.getElementById('advancedOptions');
+            const icon = document.getElementById('advancedToggleIcon');
+            if (options.classList.contains('hidden')) {
+                options.classList.remove('hidden');
+                icon.innerText = '▼';
+            } else {
+                options.classList.add('hidden');
+                icon.innerText = '▶';
+            }
+        }
+
+        function saveCookies() {
+            const cookies = document.getElementById('cookiesInput').value.trim();
+            if (cookies) {
+                localStorage.setItem('savedCookies', cookies);
+                alert('✅ Cookies 已儲存在瀏覽器中');
+            } else {
+                localStorage.removeItem('savedCookies');
+                alert('❌ Cookies 已清除');
+            }
+        }
+
         async function analyze() {
             const url = document.getElementById('urlInput').value;
+            const cookies = document.getElementById('cookiesInput').value;
             if (!url) return alert('請輸入連結');
+            
+            // Auto-save cookies if provided
+            if (cookies && cookies.trim()) {
+                localStorage.setItem('savedCookies', cookies.trim());
+            }
 
             const btn = document.getElementById('analyzeBtn');
             const loading = document.getElementById('loading');
@@ -60,13 +134,19 @@
                 const response = await fetch('/api/analyze', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ url })
+                    body: JSON.stringify({ url, cookies: cookies || null })
                 });
 
                 const data = await response.json();
 
                 if (!response.ok) {
-                    throw new Error(data.detail || '解析失敗');
+                    const detail = data.detail || '解析失敗';
+                    // If login required, open advanced options automatically
+                    if (detail.toLowerCase().includes('login') || detail.toLowerCase().includes('cookies')) {
+                        document.getElementById('advancedOptions').classList.remove('hidden');
+                        document.getElementById('advancedToggleIcon').innerText = '▼';
+                    }
+                    throw new Error(detail);
                 }
 
                 renderResults(data);
@@ -149,8 +229,15 @@
                 resultArea.appendChild(card);
             });
         }
-        
-        // PWA Install Logic
+         - merge with existing DOMContentLoaded
+        window.addEventListener('DOMContentLoaded', () => {
+            // Load saved cookies
+            const savedCookies = localStorage.getItem('savedCookies');
+            if (savedCookies) {
+                document.getElementById('cookiesInput').value = savedCookies;
+            }
+            
+            // Handle shared URL
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.register('/sw.js')
                 .then(reg => console.log('SW registered!', reg))

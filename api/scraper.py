@@ -10,7 +10,7 @@ import sys
 USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 MOBILE_USER_AGENT = 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Mobile Safari/537.36'
 
-def get_html(url, mobile=False):
+def get_html(url, mobile=False, cookies=None):
     # Use cloudscraper to bypass some bot detection
     scraper = cloudscraper.create_scraper(
         browser={
@@ -30,12 +30,17 @@ def get_html(url, mobile=False):
         'Sec-Fetch-User': '?1',
         'Upgrade-Insecure-Requests': '1',
     }
+    
+    # Add cookies if provided (format: "name1=value1; name2=value2")
+    if cookies:
+        headers['Cookie'] = cookies
+    
     try:
         response = scraper.get(url, headers=headers, timeout=15)
         
-        # Check for login page
-        if "Login • Instagram" in response.text or "Log In" in response.text:
-            print(f"WARNING: Possible Login Wall detected for {url}")
+        # Precise login wall check: only the dedicated login page has this title
+        if "Login • Instagram" in response.text or "login_required" in response.text:
+            print(f"WARNING: Login wall detected for {url}")
             
         response.raise_for_status()
         return response.text
@@ -78,14 +83,20 @@ def extract_media_from_node(node):
                 'width': node.get('original_width'), 'height': node.get('original_height')}
     return {}
 
-def parse_instagram(url):
+def parse_instagram(url, cookies=None):
     print(f"Parsing Instagram: {url}")
-    html = get_html(url)
+    html = get_html(url, cookies=cookies)
     if not html: return None
     
     result = {'type': 'instagram', 'url': url, 'media': []}
     soup = BeautifulSoup(html, 'lxml')
     
+    # Early login wall detection
+    title_tag = soup.find('title')
+    if title_tag and 'Login' in (title_tag.get_text() or ''):
+        result['error'] = 'Instagram requires login. Please provide cookies in Advanced Options.'
+        return result
+
     # Method 1: Try all application/json scripts first (highest quality)
     json_scripts = soup.find_all('script', type='application/json')
     for script in json_scripts:
@@ -209,15 +220,20 @@ def parse_instagram(url):
     if og_video:
         result['media'].append({'type': 'video', 'url': og_video['content']})
     elif og_image:
-        # ponytail: OG image is often cropped/thumbnail, not original
-        result['media'].append({'type': 'image', 'url': og_image['content']})
+        img_url = og_image.get('content', '')
+        # ponytail: scontent-* CDNs serve user photos; static CDNs serve logos/placeholders
+        if 'scontent' in img_url or '.fbcdn.net' in img_url:
+            result['media'].append({'type': 'image', 'url': img_url})
+        else:
+            print(f"  -> OG image looks like a placeholder, skipping: {img_url[:80]}")
+            result['error'] = 'Could not extract media. This post may require login – provide your Instagram cookies in Advanced Options.'
         
     return result
 
-def parse_facebook(url):
+def parse_facebook(url, cookies=None):
     print(f"Parsing Facebook: {url}")
     # Use desktop user agent for RelayPrefetchedStreamCache
-    html = get_html(url, mobile=False)
+    html = get_html(url, mobile=False, cookies=cookies)
     if not html: return None
 
     result = {'type': 'facebook', 'url': url, 'media': []}
@@ -286,7 +302,7 @@ def parse_facebook(url):
 
     # 2. Fallback to Mobile Parsing (Old method)
     print("  -> Fallback to Mobile Parsing")
-    html_mobile = get_html(url, mobile=True)
+    html_mobile = get_html(url, mobile=True, cookies=cookies)
     if html_mobile:
         soup_mobile = BeautifulSoup(html_mobile, 'lxml')
         
@@ -309,9 +325,9 @@ def parse_facebook(url):
 
     return result
 
-def parse_threads(url):
+def parse_threads(url, cookies=None):
     print(f"Parsing Threads: {url}")
-    html = get_html(url)
+    html = get_html(url, cookies=cookies)
     if not html: return None
     
     result = {'type': 'threads', 'url': url, 'media': []}
@@ -529,6 +545,87 @@ def parse_threads(url):
             result['media'].append({'type': 'image', 'url': og_image['content']})
         
     return result
+
+def parse_xiutaku(url, cookies=None):
+    """Parse xiutaku.com photo gallery pages, handling pagination."""
+    print(f"Parsing Xiutaku: {url}")
+    
+    # Normalize URL: remove trailing slash, strip existing page params for base URL
+    url = url.rstrip('/')
+    base_url = re.sub(r'\?page=\d+', '', url)
+    
+    result = {'type': 'xiutaku', 'url': url, 'media': []}
+    
+    # Fetch the first page to determine total pages
+    html = get_html(base_url, cookies=cookies)
+    if not html:
+        return result
+    
+    soup = BeautifulSoup(html, 'lxml')
+    
+    # Extract title for metadata
+    title_tag = soup.find('title')
+    if title_tag:
+        result['title'] = title_tag.get_text(strip=True)
+    
+    # Determine total page count from pagination links
+    total_pages = 1
+    pagination = soup.find('nav', class_='pagination')
+    if pagination:
+        page_links = pagination.find_all('a', class_='pagination-link')
+        for link in page_links:
+            try:
+                page_num = int(link.get_text(strip=True))
+                if page_num > total_pages:
+                    total_pages = page_num
+            except (ValueError, TypeError):
+                continue
+    
+    print(f"  -> Found {total_pages} page(s)")
+    
+    # Extract images from each page
+    seen_urls = set()
+    
+    for page in range(1, total_pages + 1):
+        if page == 1:
+            page_html = html  # Already fetched
+        else:
+            page_url = f"{base_url}?page={page}"
+            print(f"  -> Fetching page {page}: {page_url}")
+            page_html = get_html(page_url, cookies=cookies)
+            if not page_html:
+                print(f"  -> Failed to fetch page {page}")
+                continue
+        
+        page_soup = BeautifulSoup(page_html, 'lxml')
+        
+        # Find article content area
+        article = page_soup.find('div', class_='article-fulltext')
+        if not article:
+            # Fallback: search entire page
+            article = page_soup
+        
+        # Extract all img tags with .jpg URLs from i.xiutaku.com
+        imgs = article.find_all('img')
+        for img in imgs:
+            src = img.get('src', '')
+            if src and 'i.xiutaku.com' in src and src.endswith('.jpg'):
+                if src not in seen_urls:
+                    seen_urls.add(src)
+                    result['media'].append({
+                        'type': 'image',
+                        'url': src,
+                        'width': img.get('width'),
+                        'height': img.get('height')
+                    })
+        
+        # Small delay between pages to be polite
+        if page < total_pages:
+            time.sleep(0.5)
+    
+    print(f"  -> Total images found: {len(result['media'])}")
+    return result
+
 
 def main():
     urls = [

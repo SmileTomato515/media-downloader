@@ -6,7 +6,7 @@ from pydantic import BaseModel
 import uvicorn
 import os
 import requests
-from .scraper import parse_instagram, parse_facebook, parse_threads
+from .scraper import parse_instagram, parse_facebook, parse_threads, parse_xiutaku
 
 app = FastAPI()
 
@@ -25,6 +25,7 @@ async def get_sw():
 
 class URLRequest(BaseModel):
     url: str
+    cookies: str = None  # Optional: "sessionid=xxx; csrftoken=yyy"
 
 @app.get("/", response_class=HTMLResponse)
 async def read_root(request: Request):
@@ -33,15 +34,20 @@ async def read_root(request: Request):
 @app.post("/api/analyze")
 async def analyze_url(request: URLRequest):
     url = request.url
+    cookies = request.cookies
     print(f"Analyzing: {url}")
+    if cookies:
+        print("Using provided cookies for authentication")
     
     try:
         if "instagram.com" in url:
-            data = parse_instagram(url)
+            data = parse_instagram(url, cookies=cookies)
         elif "facebook.com" in url:
-            data = parse_facebook(url)
+            data = parse_facebook(url, cookies=cookies)
         elif "threads.com" in url or "threads.net" in url:
-            data = parse_threads(url)
+            data = parse_threads(url, cookies=cookies)
+        elif "xiutaku.com" in url:
+            data = parse_xiutaku(url, cookies=cookies)
         else:
             raise HTTPException(status_code=400, detail="Unsupported URL")
             
@@ -59,10 +65,17 @@ async def proxy_download(url: str, name: str = None, inline: bool = False):
     Proxy the download to avoid CORS/Referer issues on the client side.
     """
     try:
-        # Mimic a browser request
+        # Mimic a browser request - set Referer based on download source
+        if "xiutaku.com" in url:
+            referer = "https://xiutaku.com/"
+        elif "facebook.com" in url or "fbcdn.net" in url:
+            referer = "https://www.facebook.com/"
+        else:
+            referer = "https://www.instagram.com/"
+        
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Referer": "https://www.instagram.com/" 
+            "Referer": referer
         }
         
         r = requests.get(url, headers=headers, stream=True)

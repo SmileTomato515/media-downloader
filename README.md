@@ -11,12 +11,47 @@
 
 - 支援 Instagram / Facebook / Threads 連結分析
 - **優先解析原始高解析度媒體**（避免只抓取到縮圖）
+- **🔐 登入狀態下載**：支援提供 Cookies 下載需要登入才能看到的完整內容（影片、隱藏照片等）
 - 支援 Threads 的 `/post/`, `/t/`, `/share/` 格式連結（自動解析重定向）
 - **精確匹配 shortcode**：無效或已刪除的貼文會返回空結果，避免誤抓推薦內容
 - 回傳貼文內圖片與影片清單（依平台結構解析）
 - `proxy_download` 代理下載，避免前端直接抓取被擋
 - 內建 PWA 靜態檔路由（`manifest.json` / `sw.js`）
 - 可用 Docker 部署（預設 Cloud Run 相容設定）
+
+## 🔐 登入狀態下載
+
+某些貼文（如 Threads）在未登入狀態下可能只顯示部分內容。您可以提供 Cookies 來下載完整內容：
+
+### Cookies 重要說明：
+
+- ✅ **Instagram 和 Threads** cookies 可以共用（同一帳號系統）
+- ❌ **Facebook** cookies 需要單獨設定
+- ⏰ Cookies 會過期（通常幾天到幾週），過期後需重新取得
+- 💾 **自動儲存**：輸入一次後會自動儲存在瀏覽器，下次無需重新貼上
+
+### 如何取得 Cookies：
+
+1. 在瀏覽器登入 Instagram/Threads
+2. 按 `F12` 開啟開發者工具
+3. 點擊 **Application** (或 **應用程式**) 分頁
+4. 左側選擇 **Cookies** → 選擇對應網站
+5. 找到 `sessionid` 並複製其值
+6. 在網頁「進階選項」中貼上：`sessionid=你的值`
+7. 點擊「💾 儲存」按鈕（或直接解析，會自動儲存）
+
+### API 使用方式：
+
+```bash
+curl -X POST "http://localhost:8000/api/analyze" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://threads.com/...", "cookies": "sessionid=xxxxx"}'
+```
+
+> **注意**：
+> - Cookies 僅儲存在您的瀏覽器本地（localStorage），不會上傳到伺服器儲存
+> - API 使用時 cookies 僅在當次請求中使用
+> - 請妥善保管您的 session 資訊
 
 ## 技術棧
 
