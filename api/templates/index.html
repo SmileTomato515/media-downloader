@@ -80,13 +80,6 @@
     </div>
 
     <script>
-        // Load saved cookies on page load
-        window.addEventListener('DOMContentLoaded', () => {
-            const savedCookies = localStorage.getItem('savedCookies');
-            if (savedCookies) {
-                document.getElementById('cookiesInput').value = savedCookies;
-            }
-        });
 
         function toggleAdvanced() {
             const options = document.getElementById('advancedOptions');
@@ -229,26 +222,26 @@
                 resultArea.appendChild(card);
             });
         }
-         - merge with existing DOMContentLoaded
+
+        // Single consolidated DOMContentLoaded handler
         window.addEventListener('DOMContentLoaded', () => {
             // Load saved cookies
             const savedCookies = localStorage.getItem('savedCookies');
             if (savedCookies) {
                 document.getElementById('cookiesInput').value = savedCookies;
             }
-            
-            // Handle shared URL
-        if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('/sw.js')
-                .then(reg => console.log('SW registered!', reg))
-                .catch(err => console.log('SW failed', err));
-        }
 
-        // Handle Share Target (URL params)
-        window.addEventListener('DOMContentLoaded', () => {
+            // Register Service Worker
+            if ('serviceWorker' in navigator) {
+                navigator.serviceWorker.register('/sw.js')
+                    .then(reg => console.log('SW registered!', reg))
+                    .catch(err => console.log('SW failed', err));
+            }
+
+            // Handle Share Target (URL params)
             const urlParams = new URLSearchParams(window.location.search);
             const sharedUrl = urlParams.get('text') || urlParams.get('url') || urlParams.get('title');
-            
+
             if (sharedUrl) {
                 // Extract URL from text if mixed (e.g. "Check this out https://...")
                 const urlMatch = sharedUrl.match(/https?:\/\/[^\s]+/);
