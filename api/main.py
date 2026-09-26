@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException, Request, Form
 from fastapi.responses import HTMLResponse, FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from typing import Optional
 from pydantic import BaseModel
 import uvicorn
 import os
@@ -25,7 +26,7 @@ async def get_sw():
 
 class URLRequest(BaseModel):
     url: str
-    cookies: str = None  # Optional: "sessionid=xxx; csrftoken=yyy"
+    cookies: Optional[str] = None  # Optional: "sessionid=xxx; csrftoken=yyy"
 
 @app.get("/", response_class=HTMLResponse)
 async def read_root(request: Request):

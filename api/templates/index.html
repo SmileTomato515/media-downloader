@@ -124,10 +124,14 @@
             resultArea.innerHTML = '';
 
             try {
+                const payload = { url };
+                if (cookies && cookies.trim()) {
+                    payload.cookies = cookies.trim();
+                }
                 const response = await fetch('/api/analyze', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ url, cookies: cookies || null })
+                    body: JSON.stringify(payload)
                 });
 
                 const data = await response.json();
