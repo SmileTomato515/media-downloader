@@ -133,7 +133,9 @@
                 const data = await response.json();
 
                 if (!response.ok) {
-                    const detail = data.detail || '解析失敗';
+                    const rawDetail = data.detail;
+                    const detail = typeof rawDetail === 'string' ? rawDetail 
+                                 : (rawDetail ? JSON.stringify(rawDetail) : '解析失敗');
                     // If login required, open advanced options automatically
                     if (detail.toLowerCase().includes('login') || detail.toLowerCase().includes('cookies')) {
                         document.getElementById('advancedOptions').classList.remove('hidden');
